@@ -45,19 +45,16 @@ namespace PlexListener
             string sbConnectionString = _configuration["AzureServiceBus:ConnectionString"];
             _serviceBusClient = new ServiceBusClient(sbConnectionString);
 
-            // Initialize Service Bus Senders for Success and Error Queues
             string successQueueName = _configuration["AzureServiceBus:SendQueueName"];
             string errorQueueName = _configuration["AzureServiceBus:ErrorQueueName"];
             _successSender = _serviceBusClient.CreateSender(successQueueName);
             _errorSender = _serviceBusClient.CreateSender(errorQueueName);
 
-            // Initialize Blob Container Client
             string blobConnectionString = _configuration["AzureBlobStorage:ConnectionString"];
             string hotContainerName = _configuration["AzureBlobStorage:HotContainerName"];
             _hotContainerClient = new BlobContainerClient(blobConnectionString, hotContainerName);
             _hotContainerClient.CreateIfNotExists();
 
-            // Ensure Download Directories Exist
             var mediaMappings = _configuration.GetSection("MediaMappings")
                 .Get<Dictionary<string, string>>();
             foreach (var mapping in mediaMappings)
@@ -82,11 +79,10 @@ namespace PlexListener
             string body = args.Message.Body.ToString();
             Console.WriteLine($"Received message: {body}");
 
-            bool isSuccess = true; // Flag to track overall success
+            bool isSuccess = true;
 
             try
             {
-                // Deserialize the folder structure
                 FolderNode rootFolder = JsonSerializer.Deserialize<FolderNode>(body, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
@@ -99,24 +95,20 @@ namespace PlexListener
                 }
                 else
                 {
-                    // Start downloading files based on the folder structure
                     await DownloadFolderAsync(rootFolder, _hotContainerClient);
                 }
 
                 if (isSuccess)
                 {
-                    // Send Success Message
                     await SendMessageAsync(_successSender, $"Successfully processed message: {args.Message.MessageId}");
                     Console.WriteLine("All files downloaded successfully.");
                 }
                 else
                 {
-                    // Send Error Message
                     await SendMessageAsync(_errorSender, $"Failed to process message: {args.Message.MessageId}");
                     Console.WriteLine("There were issues processing the message.");
                 }
 
-                // Complete the message
                 await args.CompleteMessageAsync(args.Message);
             }
             catch (Exception ex)
@@ -124,11 +116,7 @@ namespace PlexListener
                 Console.WriteLine($"Error processing message: {ex.Message}");
                 isSuccess = false;
 
-                // Send Error Message
                 await SendMessageAsync(_errorSender, $"Exception processing message {args.Message.MessageId}: {ex.Message}");
-
-                // Optionally, abandon the message or dead-letter it
-                // await args.AbandonMessageAsync(args.Message);
             }
         }
 
@@ -140,10 +128,8 @@ namespace PlexListener
 
         private static async Task DownloadFolderAsync(FolderNode folder, BlobContainerClient blobClient, string currentBlobPath = "")
         {
-            // Update the blob path by appending the current folder's name
             string updatedBlobPath = string.IsNullOrEmpty(currentBlobPath) ? folder.Name : $"{currentBlobPath}/{folder.Name}";
 
-            // Determine the media type based on the current path
             string mediaType = DetermineMediaType(updatedBlobPath);
 
             if (string.IsNullOrEmpty(mediaType))
@@ -152,7 +138,6 @@ namespace PlexListener
                 return;
             }
 
-            // Get the corresponding download directory from media mappings
             string downloadDirectory = _configuration[$"MediaMappings:{mediaType}"];
             if (string.IsNullOrEmpty(downloadDirectory))
             {
@@ -160,11 +145,9 @@ namespace PlexListener
                 return;
             }
 
-            // Create the local folder path
             string localFolderPath = Path.Combine(downloadDirectory, updatedBlobPath.Replace(mediaType, "").Trim('/'));
             Directory.CreateDirectory(localFolderPath);
 
-            // Download files in the current folder
             foreach (var file in folder.Files)
             {
                 string blobName = $"{updatedBlobPath}/{file.Name}";
@@ -177,7 +160,6 @@ namespace PlexListener
                 }
             }
 
-            // Recursively download subfolders
             foreach (var subfolder in folder.Subfolders)
             {
                 await DownloadFolderAsync(subfolder, blobClient, updatedBlobPath);
